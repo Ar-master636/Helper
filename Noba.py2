@@ -1,0 +1,141 @@
+import streamlit as st
+import openai
+import os
+import whisper
+import tempfile
+from moviepy.editor import AudioFileClip
+import PyPDF2
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from io import BytesIO
+
+# ====== OPENAI KEY ======
+openai.api_key = st.secrets.get("OPENAI_API_KEY")
+if not openai.api_key:
+    st.error("Please add your OPENAI_API_KEY in Secrets (Settings → Secrets)")
+    st.stop()
+
+# ====== LOAD WHISPER ONCE ======
+@st.cache_resource
+def get_model():
+    return whisper.load_model("base")
+
+model = get_model()
+
+# ====== UI ======
+st.set_page_config(page_title="Nova AI", layout="centered")
+st.title("Nova AI – Turbo AI Killer")
+st.markdown("**English • Instant • Beautiful notes, quiz, flashcards, mind map & podcast**")
+
+tab1, tab2, tab3 = st.tabs(["Paste Text", "YouTube (paste transcript)", "Upload File"])
+
+text = ""
+
+with tab1:
+    text = st.text_area("Paste your lecture/text here", height=200)
+
+with tab2:
+    st.info("YouTube auto-transcript coming soon — just copy the transcript and paste in tab 1")
+    text = st.text_area("Or paste YouTube transcript here", height=200)
+
+with tab3:
+    file = st.file_uploader("PDF • Audio • Video", type=["pdf","txt","mp3","wav","mp4","m4a"])
+    if file:
+        with st.spinner("Extracting text..."):
+            if file.type == "application/pdf":
+                reader = PyPDF2.PdfReader(file)
+                text = "\n".join([p.extract_text() or "" for p in reader.pages])
+            elif file.type.startswith(("audio/", "video/")):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file.name) as tmp:
+                    tmp.write(file.read())
+                    tmp_path = tmp.name
+                if file.type.startswith("video/"):
+                    audio = AudioFileClip(tmp_path)
+                    wav_path = tmp_path + ".wav"
+                    audio.write_audiofile(wav_path, logger=None)
+                    result = model.transcribe(wav_path)
+                    os.unlink(wav_path)
+                else:
+                    result = model.transcribe(tmp_path)
+                text = result["text"]
+                os.unlink(tmp_path)
+            else:
+                text = file.read().decode("utf-8")
+        st.success("Ready!")
+        st.text_area("Extracted text", text, height=150)
+
+# ====== GENERATE EVERYTHING ======
+if text.strip() and st.button("Generate Everything – Nova Ultra", type="primary"):
+    with st.spinner("Creating magic..."):
+        try:
+            # 1. Notes
+            notes = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": 
+                    "Create beautiful English study notes with emojis, tables, LaTeX, and callouts:\n\n" + text[:10000]
+                }]
+            ).choices[0].message.content
+
+            # 2. Quiz
+            quiz = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": 
+                    "Create 15 mixed quiz questions (MCQ, True/False, fill-in) with answers:\n\n" + text[:8000]
+                }]
+            ).choices[0].message.content
+
+            # 3. Flashcards
+            cards = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": 
+                    "Create 12 Anki flashcards in format → Front: question | Back: answer | Tags: #nova\n\n" + text[:8000]
+                }]
+            ).choices[0].message.content
+
+            # 4. Mind map
+            mindmap = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": 
+                    "Return ONLY valid Mermaid mindmap code (no extra text):\n\n" + text[:5000]
+                }]
+            ).choices[0].message.content
+
+            # 5. Podcast script
+            podcast = openai.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": 
+                    "Write a fun 6–8 minute podcast script with [Host] and [Expert] voices:\n\n" + text[:8000]
+                }]
+            ).choices[0].message.content
+
+           
+
+            st.success("Done!")
+
+            st.markdown("### Rich Notes")
+            st.markdown(notes)
+
+            st.markdown("### Mind Map (copy → mermaid.live)")
+            st.code(mindmap, language="mermaid")
+
+            st.markdown("### Quiz")
+            st.markdown(quiz)
+
+            st.markdown("### Anki Flashcards")
+            st.code(cards)
+
+            st.markdown("### Podcast Script")
+            st.text_area("Copy for TTS", podcast, height=300)
+
+            # PDF
+            buffer = BytesIO()
+            c = canvas.Canvas(buffer, pagesize=letter)
+            c.setFont("Helvetica", 10)
+            textobject = c.beginText(40, 750)
+            for line in (notes + "\n\n" + quiz)[:6000].split("\n"):
+                textobject.textLine(line[:100])
+            c.drawText(textobject)
+            c.showPage()
+            c.save()
+            buffer.seek(0)
+            st.download_button("Download
