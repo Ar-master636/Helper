@@ -1,0 +1,7 @@
+streamlit
+openai
+whisper
+moviepy
+PyPDF2
+reportlab
+requests
